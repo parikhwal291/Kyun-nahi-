@@ -30,19 +30,12 @@ async function derive(
 export async function hashPin(pin: string): Promise<string> {
   const salt = randomBytes(SALT_LEN);
   const key = await derive(pin, salt, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
-  return [
-    "scrypt",
-    SCRYPT_N,
-    SCRYPT_R,
-    SCRYPT_P,
-    salt.toString("base64"),
-    key.toString("base64"),
-  ].join("$");
+  return `scrypt:${SCRYPT_N}:${SCRYPT_R}:${SCRYPT_P}:${salt.toString("base64")}:${key.toString("base64")}`;
 }
 
 /** Constant-time comparison of a PIN against a stored scrypt hash. */
 export async function verifyPin(pin: string, stored: string): Promise<boolean> {
-  const parts = stored.split("$");
+  const parts = stored.split(":");
   if (parts.length !== 6 || parts[0] !== "scrypt") return false;
 
   const n = Number(parts[1]);

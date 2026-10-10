@@ -1,11 +1,18 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { getDb } from "../db";
-import type { Session, StudentSessionContext } from "../types";
+import type { Session } from "../types";
 
 export const SESSION_COOKIE = "sid";
 export const SESSION_TTL_MS = 30 * 60 * 1000; // sliding 30 minutes
 export const SESSION_HARD_CAP_MS = 2 * 60 * 60 * 1000; // absolute 2-hour cap
+
+/** What requireStudent() returns — scoped by the verified session. */
+export type StudentSessionContext = {
+  studentId: string;
+  classId: string;
+  sid: string;
+};
 
 export class StudentAuthError extends Error {
   readonly status = 401;
@@ -60,7 +67,8 @@ export function sessionCookieOptions() {
 
 /**
  * Loads the session from the cookie, verifies the HMAC, checks expiry, and
- * slides the 30-minute window on activity (never past the 2-hour hard cap).
+ * slides the 30-minute window on activity (never past the 2-hour hard cap,
+ * derived from createdAt).
  */
 export async function getSessionFromCookie(): Promise<Session | null> {
   const cookieStore = await cookies();
@@ -76,9 +84,10 @@ export async function getSessionFromCookie(): Promise<Session | null> {
 
   const now = Date.now();
   if (session.expiresAt.getTime() <= now) return null;
-  if (session.hardExpiresAt.getTime() <= now) return null;
+  const hardCap = session.createdAt.getTime() + SESSION_HARD_CAP_MS;
+  if (hardCap <= now) return null;
 
-  const newExpiry = Math.min(now + SESSION_TTL_MS, session.hardExpiresAt.getTime());
+  const newExpiry = Math.min(now + SESSION_TTL_MS, hardCap);
   if (newExpiry > session.expiresAt.getTime()) {
     await db
       .collection<Session>("sessions")
@@ -97,3 +106,4 @@ export async function requireStudent(): Promise<StudentSessionContext> {
   if (!session) throw new StudentAuthError();
   return { studentId: session.studentId, classId: session.classId, sid: session.sid };
 }
+

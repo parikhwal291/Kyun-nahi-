@@ -1,4 +1,5 @@
 import { getDb } from "../db";
+import type { LoginAttempt } from "../types";
 
 const RATE_LIMITS = "rate_limits";
 const LOGIN_LOCKS = "login_locks";
@@ -12,14 +13,6 @@ interface RateLimitDoc {
   key: string;
   count: number;
   windowStart: Date;
-}
-
-interface LoginLockDoc {
-  classCode: string;
-  rollNumber: string;
-  failedCount: number;
-  lockedUntil: Date | null;
-  lastFailedAt: Date | null;
 }
 
 export type RateLimitResult =
@@ -64,11 +57,11 @@ export async function checkRateLimit(
 /** True when a class code + roll number is locked out after repeated failures. */
 export async function isLocked(
   classCode: string,
-  rollNumber: string,
+  rollNumber: number,
 ): Promise<boolean> {
   const db = await getDb();
   const doc = await db
-    .collection<LoginLockDoc>(LOGIN_LOCKS)
+    .collection<LoginAttempt>(LOGIN_LOCKS)
     .findOne({ classCode, rollNumber });
   if (!doc?.lockedUntil) return false;
   return doc.lockedUntil.getTime() > Date.now();
@@ -77,10 +70,10 @@ export async function isLocked(
 /** Records a failed login and locks the account after MAX_FAILURES attempts. */
 export async function recordFailure(
   classCode: string,
-  rollNumber: string,
+  rollNumber: number,
 ): Promise<void> {
   const db = await getDb();
-  const col = db.collection<LoginLockDoc>(LOGIN_LOCKS);
+  const col = db.collection<LoginAttempt>(LOGIN_LOCKS);
   const now = new Date();
 
   await col.updateOne(
@@ -105,11 +98,12 @@ export async function recordFailure(
 /** Clears failed-attempt counters and any lock after a successful login. */
 export async function clearFailures(
   classCode: string,
-  rollNumber: string,
+  rollNumber: number,
 ): Promise<void> {
   const db = await getDb();
-  await db.collection<LoginLockDoc>(LOGIN_LOCKS).updateOne(
+  await db.collection<LoginAttempt>(LOGIN_LOCKS).updateOne(
     { classCode, rollNumber },
     { $set: { failedCount: 0, lockedUntil: null, lastFailedAt: null } },
   );
 }
+

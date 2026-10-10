@@ -3,7 +3,6 @@ import { getDb } from "@/lib/db";
 import {
   createSessionId,
   SESSION_COOKIE,
-  SESSION_HARD_CAP_MS,
   SESSION_TTL_MS,
   sessionCookieOptions,
   signSessionToken,
@@ -15,7 +14,7 @@ import {
   isLocked,
   recordFailure,
 } from "@/lib/auth/rate-limit";
-import { StudentLoginInputSchema } from "@/lib/schemas";
+import { StudentLoginInputSchema } from "@/lib/types";
 import type { SchoolClass, Student } from "@/lib/types";
 
 const GENERIC_ERROR = "Incorrect class code, roll number, or PIN.";
@@ -54,7 +53,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: TOO_MANY_ERROR }, { status: 429 });
   }
 
-  // 3. Resolve the class and student.
+  // 3. Resolve the class and student by their string ids.
   const db = await getDb();
   const schoolClass = await db
     .collection<SchoolClass>("classes")
@@ -62,7 +61,7 @@ export async function POST(request: Request) {
   const student = schoolClass
     ? await db
         .collection<Student>("students")
-        .findOne({ classId: schoolClass._id, rollNumber })
+        .findOne({ classId: schoolClass.id, rollNumber })
     : null;
 
   // 4. Verify the PIN (burn equal time whether or not the student exists).
@@ -73,7 +72,7 @@ export async function POST(request: Request) {
     await burnPin(pin);
   }
 
-  if (!schoolClass || !student || !valid) {
+  if (!schoolClass || !student || !student.active || !valid) {
     await recordFailure(classCode, rollNumber);
     return NextResponse.json({ ok: false, error: GENERIC_ERROR }, { status: 401 });
   }
@@ -85,14 +84,14 @@ export async function POST(request: Request) {
   const now = new Date();
   await db.collection("sessions").insertOne({
     sid,
-    studentId: student._id,
-    classId: schoolClass._id,
+    studentId: student.id,
+    classId: schoolClass.id,
     createdAt: now,
     expiresAt: new Date(now.getTime() + SESSION_TTL_MS),
-    hardExpiresAt: new Date(now.getTime() + SESSION_HARD_CAP_MS),
   });
 
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE, signSessionToken(sid), sessionCookieOptions());
   return res;
 }
+
