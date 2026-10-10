@@ -35,19 +35,19 @@ export const MODELS: Record<JobName, JobModels> = {
   extractConcepts: {
     primary: "anthropic/claude-sonnet-5.5",
     fallback: "google/gemini-2.5-pro",
-    maxTokens: 3000,
+    maxTokens: 6000, // Hindi + reasoning can exceed 3000
     timeoutMs: 60_000,
   },
   juniorTurn: {
     primary: "google/gemini-2.5-flash",
     fallback: "cline-pass/deepseek-v4.1-flash", // ClinePass tier
-    maxTokens: 800,
+    maxTokens: 1200, // Hindi costs more tokens
     timeoutMs: 30_000,
   },
   evaluateConversation: {
     primary: "anthropic/claude-sonnet-5.5",
     fallback: "google/gemini-2.5-pro",
-    maxTokens: 1500,
+    maxTokens: 3000, // Hindi costs more tokens
     timeoutMs: 30_000,
   },
   groupMisconceptions: {

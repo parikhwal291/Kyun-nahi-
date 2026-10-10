@@ -20,11 +20,12 @@ RULES
   - "title": a short concept name.
   - "level": one of "primary", "middle", "secondary".
   - "language": one of "en", "hi".
-  - "rubric": an array of 3-5 objects, each { "point": string }, stating what a student must be able to do to show they understood the concept.
-  - "wrongIdeas": an array of 2-3 common misconceptions, each { "label": string, "description": string }; "label" is a short tag, "description" is one sentence.
+  - "rubric": an array of 3-5 objects, each { "point": string }, describing what a student must be able to do. At most ONE point per concept may test naming a term (for example, "Names ..."). Every other point MUST test causal understanding: in English begin it with "Explains why ...", "Explains how ..." or "Predicts what happens if ..."; in Hindi use the equivalent causal phrasing. Never write a point that only checks recall of vocabulary.
+  - "wrongIdeas": an array of 2-3 common misconceptions, each { "label": string, "description": string }. "label" is a clean 2-5 word summary that paraphrases THAT misconception (it is used as a clustering tag, so it must match its own "description", never a vague topic). "description" is one sentence.
   - "prereqSuggestion": a short phrase naming a prerequisite concept, or null if none applies.
   - "prereqClassHint": a short hint about the earlier class/grade where the prerequisite is usually taught, or null if none applies.
 - Use the level and language given in the request. Write rubric points and wrong ideas in the SAME language as the material.
+- In Hindi, phrase every rubric point with the gender-neutral "... सकते हैं" form (for example "समझा सकते हैं", "बता सकते हैं", "अनुमान लगा सकते हैं") — never "सकता है" or "सकती है".
 - Do not invent concepts or facts the notes do not support.
 - Respond with ONLY a JSON object shaped like { "concepts": [ ... ] }. No markdown fences, no commentary.`;
 
