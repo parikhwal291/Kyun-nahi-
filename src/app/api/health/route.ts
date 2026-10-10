@@ -3,8 +3,9 @@
 // Default: reports key presence (boolean, never the value) + asserts credit-billed
 // model IDs against the live catalog. With ?deep=1 AND NODE_ENV=development, it also
 // runs a Hindi smoke test on a free model and probes every model in models.ts with a
-// tiny completion (max_tokens=5, "hi") — the catalog list is not authoritative for
-// cline-pass/* slugs, so those are probed, not list-asserted.
+// small completion (max_tokens=300, "Reply with the single word: ok") — the catalog
+// list is not authoritative for cline-pass/* slugs, so those are probed, not
+// list-asserted.
 
 import { allModelIds, isClinePassSlug } from "@/lib/ai/models";
 import { complete, listModels, probeModel, type ModelProbe } from "@/lib/ai/client";

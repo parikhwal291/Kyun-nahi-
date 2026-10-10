@@ -22,6 +22,15 @@
 
 ## Entries
 
+## Entry 05 — 1:55 — max_tokens=5 probe starved reasoning models (A)
+**Task:** Re-probe cline-pass/* slugs and harden the AI client.
+**Model tier:** cheap (probe: "Reply with the single word: ok", max_tokens=300).
+**Prompt excerpt:** "Reply with the single word: ok".
+**What Cline got wrong:** The first probe used max_tokens=5. Reasoning models (qwen3.7-plus, glm-5.3, deepseek, gemini-2.5-pro) spent all 5 tokens on hidden reasoning, leaving empty visible content — the gateway returned 500 "empty response content", which Cline misread as "slug doesn't exist" (Entries 01/03).
+**Fix:** Re-probed with max_tokens=300; everything except cline-pass/qwen3.8-max (timeout >40s) returns 200 with content. Restored cline-pass/glm-5.3 + cline-pass/mimo-v2.6-flash; added per-job max_tokens (800/1500/3000) with reasoning headroom, empty+length → double-and-retry, and per-request timeouts (30s/60s). probeModel now reports status/empty/finish/reasoning.
+**Outcome:** `npm run build` green; deep probe reports per-model status/empty/finish/reasoning.
+**Lesson:** For reasoning models, token budget must cover reasoning + answer; "empty response content" is token starvation, not a missing model.
+
 ## Entry 04 — 1:35 — completion response is wrapped in `data` (A)
 **Task:** A1/A2 follow-up — add a per-model probe and restore `cline-pass/*` slugs.
 **Model tier:** cheap (probe: `max_tokens=5`, "hi").

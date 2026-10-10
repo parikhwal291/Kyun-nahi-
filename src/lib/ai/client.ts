@@ -11,6 +11,9 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 8000;
+const DEFAULT_MAX_TOKENS = 1500; // headroom for reasoning tokens
+const DEFAULT_TIMEOUT_MS = 30_000;
+const PROBE_TIMEOUT_MS = 30_000;
 
 export type ChatRole = "system" | "user" | "assistant";
 
@@ -34,6 +37,7 @@ interface CallOpts {
   temperature?: number;
   maxTokens?: number;
   responseFormat?: "json_object" | "text";
+  timeoutMs?: number;
 }
 
 interface CompleteOptions extends CallOpts {
@@ -51,11 +55,40 @@ function apiKey(): string {
 }
 
 // api.cline.bot wraps successful completions as { data: { choices: [...] } }
-// (not the bare OpenAI { choices } shape). Extract text from either shape.
-function extractCompletionText(data: unknown): string {
-  const root = (data as { data?: unknown }).data ?? data;
-  const choices = (root as { choices?: { message?: { content?: string } }[] }).choices;
-  return choices?.[0]?.message?.content ?? "";
+// (not the bare OpenAI { choices } shape). We extract ONLY the visible content and
+// the metadata we need — never message.reasoning / reasoning_details, which are
+// stripped here and never returned, logged, or exposed to any API response.
+interface ParsedChatResponse {
+  content: string;
+  finishReason: string | null;
+  reasoningTokens: number | null;
+}
+
+function parseChatResponse(raw: string): ParsedChatResponse {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { content: "", finishReason: null, reasoningTokens: null };
+  }
+  const root = ((parsed as { data?: unknown }).data ?? parsed) as {
+    choices?: { finish_reason?: string | null; message?: { content?: string } }[];
+    usage?: {
+      completion_tokens_details?: { reasoning_tokens?: number };
+      reasoning_tokens?: number;
+    };
+  };
+  const choice = root.choices?.[0];
+  const content = choice?.message?.content ?? "";
+  const finishReason = choice?.finish_reason ?? null;
+  const details = root.usage?.completion_tokens_details;
+  const reasoningTokens =
+    typeof details?.reasoning_tokens === "number"
+      ? details.reasoning_tokens
+      : typeof root.usage?.reasoning_tokens === "number"
+        ? root.usage.reasoning_tokens
+        : null;
+  return { content, finishReason, reasoningTokens };
 }
 
 // Error bodies come in two shapes: { error: "..." } or { error: { message: "..." } }.
@@ -83,11 +116,17 @@ function sleep(ms: number): Promise<void> {
 }
 
 type AttemptResult =
-  | { ok: true; model: string; text: string }
-  | { ok: false; status: number; retryAfterSec: number | null };
+  | {
+      ok: true;
+      model: string;
+      text: string;
+      finishReason: string | null;
+      emptyContent: boolean;
+    }
+  | { ok: false; status: number | null; retryAfterSec: number | null; timedOut: boolean };
 
-// One POST to /chat/completions. Logs only the status code on failure — never the
-// body (which may echo our content back).
+// One POST to /chat/completions with a per-request timeout. Logs only status/timeout
+// — never the body (which may echo our content back) and never reasoning fields.
 async function attempt(
   modelId: string,
   messages: ChatMessage[],
@@ -98,38 +137,58 @@ async function attempt(
   if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens;
   if (opts.responseFormat === "json_object") body.response_format = { type: "json_object" };
 
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey()}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (res.ok) {
-    const data: unknown = await res.json();
-    const text = extractCompletionText(data);
-    return { ok: true, model: modelId, text };
-  }
-
-  const status = res.status;
-  console.warn(`[ai] ${modelId} -> HTTP ${status}`);
-
-  let retryAfterSec: number | null = null;
-  const raw = res.headers.get("retry-after");
-  if (raw) {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) retryAfterSec = n;
-  }
-
+  const controller = new AbortController();
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    await res.text(); // drain so the socket can be reused
-  } catch {
-    /* ignore */
-  }
+    const res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey()}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
 
-  return { ok: false, status, retryAfterSec };
+    if (res.ok) {
+      const parsed = parseChatResponse(await res.text());
+      return {
+        ok: true,
+        model: modelId,
+        text: parsed.content,
+        finishReason: parsed.finishReason,
+        emptyContent: parsed.content.length === 0,
+      };
+    }
+
+    const status = res.status;
+    console.warn(`[ai] ${modelId} -> HTTP ${status}`);
+
+    let retryAfterSec: number | null = null;
+    const raw = res.headers.get("retry-after");
+    if (raw) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) retryAfterSec = n;
+    }
+
+    try {
+      await res.text(); // drain so the socket can be reused
+    } catch {
+      /* ignore */
+    }
+
+    return { ok: false, status, retryAfterSec, timedOut: false };
+  } catch (err) {
+    if (controller.signal.aborted) {
+      console.warn(`[ai] ${modelId} -> timeout after ${timeoutMs}ms`);
+      return { ok: false, status: null, retryAfterSec: null, timedOut: true };
+    }
+    console.warn(`[ai] ${modelId} -> network error`);
+    return { ok: false, status: null, retryAfterSec: null, timedOut: false };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function resolveFallbackAfterFailure(opts: {
@@ -152,7 +211,9 @@ function resolveFallbackAfterFailure(opts: {
 }
 
 // Raw completion: retry 429/5xx with backoff, then fall back. On 402, a
-// credit-billed call falls back to a ClinePass-tier model.
+// credit-billed call falls back to a ClinePass-tier model. On timeout, fall back
+// immediately. Empty visible content with finish_reason "length" (reasoning models
+// starved by max_tokens) retries once with a doubled budget before falling back.
 export async function complete(opts: CompleteOptions): Promise<RawCompletion> {
   const { model, fallback, messages, ...callOpts } = opts;
 
@@ -160,8 +221,24 @@ export async function complete(opts: CompleteOptions): Promise<RawCompletion> {
 
   for (let attemptNo = 0; attemptNo <= MAX_RETRIES; attemptNo++) {
     const r = await attempt(model, messages, callOpts);
-    if (r.ok) return { model: r.model, text: r.text };
+    if (r.ok) {
+      if (r.emptyContent && r.finishReason === "length") {
+        const doubled = (callOpts.maxTokens ?? DEFAULT_MAX_TOKENS) * 2;
+        console.warn(`[ai] ${model} -> empty content (length); retrying with max_tokens ${doubled}`);
+        const retry = await attempt(model, messages, { ...callOpts, maxTokens: doubled });
+        if (retry.ok && !retry.emptyContent) {
+          return { model: retry.model, text: retry.text };
+        }
+        console.warn(`[ai] ${model} -> still empty after doubling; falling back`);
+        break;
+      }
+      return { model: r.model, text: r.text };
+    }
 
+    if (r.timedOut) {
+      console.warn(`[ai] ${model} -> timed out; switching to fallback`);
+      break;
+    }
     if (r.status === 402) {
       billingBlocked = true;
       console.warn(`[ai] ${model} -> 402 (billing) — switching to ClinePass tier`);
@@ -173,12 +250,12 @@ export async function complete(opts: CompleteOptions): Promise<RawCompletion> {
       await sleep(wait);
       continue;
     }
-    if (RETRYABLE.has(r.status)) {
+    if (r.status !== null && RETRYABLE.has(r.status)) {
       console.warn(`[ai] ${model} -> HTTP ${r.status} — retry ${attemptNo + 1}/${MAX_RETRIES}`);
       await sleep(backoffMs(attemptNo));
       continue;
     }
-    throw new Error(`AI model ${model} returned HTTP ${r.status}.`);
+    throw new Error(`AI model ${model} returned HTTP ${r.status ?? "network error"}.`);
   }
 
   const fallbackModel = resolveFallbackAfterFailure({
@@ -193,8 +270,8 @@ export async function complete(opts: CompleteOptions): Promise<RawCompletion> {
 
   const r = await attempt(fallbackModel, messages, callOpts);
   if (r.ok) return { model: r.model, text: r.text };
-  console.warn(`[ai] ${fallbackModel} -> HTTP ${r.status} (fallback failed)`);
-  throw new Error(`AI fallback ${fallbackModel} returned HTTP ${r.status}.`);
+  console.warn(`[ai] ${fallbackModel} -> HTTP ${r.status ?? "network error"} (fallback failed)`);
+  throw new Error(`AI fallback ${fallbackModel} returned HTTP ${r.status ?? "network error"}.`);
 }
 
 function stripFences(raw: string): string {
@@ -289,13 +366,18 @@ export interface ModelProbe {
   model: string;
   ok: boolean;
   status: number | null;
+  emptyContent?: boolean;
+  finishReason?: string | null;
+  reasoningTokens?: number | null;
   error?: string;
 }
 
-// Dev-only probe: send a tiny completion (max_tokens=5, "hi") to verify a model
-// actually responds. Used by /api/health?deep=1 — the catalog list is not
-// authoritative for cline-pass/* slugs.
+// Dev-only probe (used by /api/health?deep=1): send a small completion
+// (max_tokens=300) and report status, empty-content, finish_reason and
+// reasoning-token count. The catalog list is not authoritative for cline-pass/*.
 export async function probeModel(modelId: string): Promise<ModelProbe> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
     const res = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
@@ -305,21 +387,37 @@ export async function probeModel(modelId: string): Promise<ModelProbe> {
       },
       body: JSON.stringify({
         model: modelId,
-        messages: [{ role: "user", content: "hi" }],
-        max_tokens: 5,
+        messages: [{ role: "user", content: "Reply with the single word: ok" }],
+        max_tokens: 300,
       }),
+      signal: controller.signal,
     });
     const raw = await res.text();
     if (res.ok) {
-      return { model: modelId, ok: true, status: res.status };
+      const parsed = parseChatResponse(raw);
+      return {
+        model: modelId,
+        ok: parsed.content.length > 0,
+        status: res.status,
+        emptyContent: parsed.content.length === 0,
+        finishReason: parsed.finishReason,
+        reasoningTokens: parsed.reasoningTokens,
+      };
     }
-    return { model: modelId, ok: false, status: res.status, error: extractErrorMessage(raw) };
+    return {
+      model: modelId,
+      ok: false,
+      status: res.status,
+      error: extractErrorMessage(raw),
+    };
   } catch (err) {
     return {
       model: modelId,
       ok: false,
       status: null,
-      error: err instanceof Error ? err.message : String(err),
+      error: controller.signal.aborted ? "timeout" : err instanceof Error ? err.message : String(err),
     };
+  } finally {
+    clearTimeout(timer);
   }
 }

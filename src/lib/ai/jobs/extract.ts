@@ -39,5 +39,7 @@ export async function extractConcepts(
     messages,
     schema: ExtractConceptsResponseSchema,
     temperature: 0.2,
+    maxTokens: MODELS.extractConcepts.maxTokens,
+    timeoutMs: MODELS.extractConcepts.timeoutMs,
   });
 }
