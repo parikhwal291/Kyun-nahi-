@@ -2,18 +2,26 @@
 // GET /api/health
 // Default: reports key presence (boolean, never the value) + asserts credit-billed
 // model IDs against the live catalog. With ?deep=1 AND NODE_ENV=development, it also
-// runs a Hindi smoke test on a free model and probes every model in models.ts with a
-// small completion (max_tokens=300, "Reply with the single word: ok") — the catalog
-// list is not authoritative for cline-pass/* slugs, so those are probed, not
-// list-asserted.
+// runs a Hindi smoke test on a free model, probes every model in models.ts
+// SEQUENTIALLY (max_tokens=300, "Reply with the single word: ok") — the catalog list
+// is not authoritative for cline-pass/* slugs, so those are probed, not list-asserted
+// — and runs a 3x Hindi roleplay check on the juniorTurn primary.
 
-import { allModelIds, isClinePassSlug } from "@/lib/ai/models";
+import { allModelIds, isClinePassSlug, MODELS } from "@/lib/ai/models";
 import { complete, listModels, probeModel, type ModelProbe } from "@/lib/ai/client";
 
 interface SmokeResult {
   model: string;
   ok: boolean;
   language: "hi";
+}
+
+interface HindiCheck {
+  run: number;
+  model: string;
+  ok: boolean;
+  reply?: string;
+  error?: string;
 }
 
 export async function GET(request: Request) {
@@ -30,6 +38,7 @@ export async function GET(request: Request) {
   };
   let smoke: SmokeResult | null = null;
   let probe: ModelProbe[] | null = null;
+  let hindi: HindiCheck[] | null = null;
 
   if (keyPresent) {
     try {
@@ -49,8 +58,15 @@ export async function GET(request: Request) {
             ? await runSmokeTest(freeModels[0])
             : { model: "", ok: false, language: "hi" };
 
-        // Authoritative per-model probe: tiny completion (max_tokens=5, "hi").
-        probe = await Promise.all(allModelIds().map((id) => probeModel(id)));
+        // Authoritative per-model probe, run SEQUENTIALLY to avoid bursting the
+        // gateway (concurrent probes trigger spurious "empty response content").
+        probe = [];
+        for (const id of allModelIds()) {
+          probe.push(await probeModel(id));
+        }
+
+        // 3x Hindi roleplay check on the juniorTurn primary.
+        hindi = await runHindiCheck();
       }
     } catch (err) {
       console.warn("[health] catalog check failed:", err instanceof Error ? err.message : String(err));
@@ -60,7 +76,7 @@ export async function GET(request: Request) {
   const ok =
     keyPresent && catalog.checked && catalog.missing.length === 0 && (!smoke || smoke.ok);
 
-  return Response.json({ ok, keyPresent, catalog, smoke, probe });
+  return Response.json({ ok, keyPresent, catalog, smoke, probe, hindi });
 }
 
 async function runSmokeTest(modelId: string): Promise<SmokeResult> {
@@ -79,4 +95,36 @@ async function runSmokeTest(modelId: string): Promise<SmokeResult> {
     console.warn("[health] smoke test failed:", err instanceof Error ? err.message : String(err));
     return { model: modelId, ok: false, language: "hi" };
   }
+}
+
+// Dev-only: ask the juniorTurn primary (as a Class-5 younger sibling) for ONE short
+// Hindi question about the water cycle, 3 times. Returns the replies.
+const HINDI_SYSTEM =
+  "You are a curious younger sibling in Class 5. Ask ONE short question about the water cycle, in simple Hindi (Devanagari). Ask only the question, with no preamble.";
+
+async function runHindiCheck(): Promise<HindiCheck[]> {
+  const model = MODELS.juniorTurn.primary;
+  const results: HindiCheck[] = [];
+  for (let run = 1; run <= 3; run++) {
+    try {
+      const { text } = await complete({
+        model,
+        messages: [
+          { role: "system", content: HINDI_SYSTEM },
+          { role: "user", content: "अपना सवाल पूछो।" },
+        ],
+        maxTokens: MODELS.juniorTurn.maxTokens,
+        temperature: 0.7,
+        timeoutMs: MODELS.juniorTurn.timeoutMs,
+      });
+      results.push({ run, model, ok: text.trim().length > 0, reply: text.trim() });
+    } catch (err) {
+      console.warn(
+        `[health] Hindi check run ${run} failed:`,
+        err instanceof Error ? err.message : String(err)
+      );
+      results.push({ run, model, ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return results;
 }
