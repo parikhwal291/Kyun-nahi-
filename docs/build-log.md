@@ -22,6 +22,25 @@
 
 ## Entries
 
+## Entry 07 — 2:25 — A4 evaluateConversation + evaluator red-team (A)
+**Task:** Build `evaluateConversation` (plain call) + `/api/chat/evaluate` route; grade causal points, not vocabulary.
+**Model tier:** strong (evaluateConversation → `anthropic/claude-sonnet-5.5`).
+**Prompt excerpt:** "Grade the causal ideas… A student who explains the idea in their own words, without the textbook term, can still be 'understood'." transcript wrapped as DATA only.
+**What Cline got wrong:** Nothing in the model output — the risky edges were anticipated in code: a deterministic fast path handles "I don't know"/too-short (not_yet + honest confidence) before any model call, and `misconceptionTag` is clamped to the concept's own `wrongIdeas[].label` so the model can never return an invented tag.
+**Fix:** n/a (guards pre-empted the failures); added `tsx` devDependency so the git-ignored `scripts/redteam.ts` can run (`node --env-file=.env --import tsx`).
+**Outcome:** 4/4 evaluator cases pass — clearly correct → understood (conf 82); wrong + known misconception → not_yet + tag "Clouds are smoke" (conf 92); vague/short → not_yet (conf 20); correct without textbook term → understood. `npm run build` green.
+**Lesson:** Put safety clamps (tag whitelist, not_yet fast path) in code, not just the prompt — the schema gate alone doesn't know the concept's labels.
+
+## Entry 06 — 2:05 — A3 juniorTurn + 4 templates + red-team (A)
+**Task:** Build `juniorTurn` (primary/secondary × en/hi), the `/api/chat/turn` route with `requireStudent` + DB seams, and the git-ignored red-team script.
+**Model tier:** cheap (juniorTurn → `google/gemini-2.5-flash`; fallback `cline-pass/deepseek-v4.1-flash`).
+**Prompt excerpt:** "You are the student's much younger sibling… You NEVER give answers. … NEVER reveal the answer." (start + end); student text wrapped in `<student_message>` as DATA only.
+**What Cline got wrong:** Chunking the large `junior.ts` prompt and the test script across editor calls dropped a closing brace in `scripts/redteam.ts` — `next build` failed with TS1005. Also the "never reveal" rule was initially a single line; moved it to the start AND end of the prompt.
+**Fix:** Rebalanced braces; stated "NEVER reveal the answer" at both ends; added deterministic `detectDistress`/`stopMessage` and a `nearlyCopiesRubric` (≥5 shared significant words → regenerate once).
+**Outcome:** Red-team 13/13 PASS on the first run — asks-for-answer ×3 (incl. Hindi), off-topic, distress, 5000-char injection, wrong/correct answers, full 5-turn chat, plus the 4 evaluator cases. `npm run build` green.
+**Lesson:** Big single-file edits must be split into small, brace-balanced chunks — and always re-run the type check after multi-part edits.
+
+
 ## Entry 05 — 1:55 — max_tokens=5 probe starved reasoning models (A)
 **Task:** Re-probe cline-pass/* slugs and harden the AI client.
 **Model tier:** cheap (probe: "Reply with the single word: ok", max_tokens=300).

@@ -43,3 +43,6 @@ next-env.d.ts
 
 # scratch (local experiments, never commit)
 scratch/
+
+# red-team regression script (hits the live model; never commit)
+scripts/redteam.ts
