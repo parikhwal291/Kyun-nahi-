@@ -18,6 +18,8 @@ import {
 
 export type CoachLanguage = "en" | "hi";
 
+export type CoachStatus = "completed" | "sdk_timeout" | "sdk_rate_limited" | "sdk_error";
+
 export interface CoachToolTraceEntry {
   tool: string;
   args: unknown;
@@ -26,19 +28,25 @@ export interface CoachToolTraceEntry {
 export interface CoachRunResult {
   answer: string;
   toolTrace: CoachToolTraceEntry[];
-  status: string;
-  error?: string;
+  status: CoachStatus;
+  message?: string;
 }
 
 export interface CoachRunOptions {
   teacherId: string;
   question: string;
   language: CoachLanguage;
-  timeoutMs?: number;
 }
 
 const COACH_BASE_URL = "https://api.cline.bot/api/v1";
 const COACH_MAX_ITERATIONS = 6;
+
+// The SDK defaults its per-request apiTimeoutMs to 180s and silently retries 5xx/429
+// with backoff (emitting no events during the wait), so we bound it from the outside:
+// abort if nothing arrives for 15s, and hard-cap the whole run at 30s.
+const ACTIVITY_TIMEOUT_MS = 15_000;
+const TOTAL_TIMEOUT_MS = 30_000;
+const RATE_LIMIT_RE = /429|rate.?limit|too many requests/i;
 
 // Errors are returned to the model as data (an { error } object) rather than thrown,
 // so a single failing tool call can't abort the whole run.
@@ -133,54 +141,87 @@ export function createCoachAgent(teacherId: string, language: CoachLanguage) {
 }
 
 export async function runCoach(options: CoachRunOptions): Promise<CoachRunResult> {
-  const { teacherId, question, language, timeoutMs = 40_000 } = options;
+  const { teacherId, question, language } = options;
   const agent = createCoachAgent(teacherId, language);
 
   const toolTrace: CoachToolTraceEntry[] = [];
+  let lastActivityAt = Date.now();
+  let rateLimited = false;
+
   const unsubscribe = agent.subscribe((event) => {
-    if (event.type === "tool-started") {
-      toolTrace.push({
-        tool: event.toolCall.toolName,
-        args: event.toolCall.input ?? null,
-      });
+    switch (event.type) {
+      case "tool-started":
+        toolTrace.push({
+          tool: event.toolCall.toolName,
+          args: event.toolCall.input ?? null,
+        });
+        lastActivityAt = Date.now();
+        break;
+      case "assistant-text-delta":
+      case "assistant-reasoning-delta":
+      case "tool-finished":
+        lastActivityAt = Date.now();
+        break;
+      case "status-notice": {
+        const msg = (event as { message?: string }).message ?? "";
+        if (RATE_LIMIT_RE.test(msg)) rateLimited = true;
+        lastActivityAt = Date.now();
+        break;
+      }
+      case "run-failed": {
+        const e = event as { error?: { message?: string }; errorClass?: string };
+        const cls = e.errorClass ?? "";
+        const msg = e.error?.message ?? "";
+        if (RATE_LIMIT_RE.test(msg) || RATE_LIMIT_RE.test(cls)) rateLimited = true;
+        break;
+      }
     }
   });
 
-  try {
-    const result = await withTimeout(agent.run(question), timeoutMs, () => agent.abort());
+  // Abort if nothing (no tool call, no text/reasoning delta) arrives within 15s, and
+  // hard-cap the whole run at 30s. This bounds the SDK's silent retry loop.
+  const totalTimer = setTimeout(() => agent.abort("sdk total time budget exceeded"), TOTAL_TIMEOUT_MS);
+  const activityTimer = setInterval(() => {
+    if (Date.now() - lastActivityAt > ACTIVITY_TIMEOUT_MS) {
+      agent.abort("sdk no-activity timeout");
+    }
+  }, 500);
 
-    if (result.status === "failed" || result.status === "aborted") {
+  try {
+    const result = await agent.run(question);
+
+    if (result.status === "failed") {
       return {
         answer: "",
         toolTrace,
-        status: result.status,
-        error: result.error?.message ?? `Coach run ${result.status}.`,
+        status: rateLimited ? "sdk_rate_limited" : "sdk_error",
+        message: result.error?.message ?? "The SDK agent failed.",
+      };
+    }
+    if (result.status === "aborted") {
+      return {
+        answer: "",
+        toolTrace,
+        status: rateLimited ? "sdk_rate_limited" : "sdk_timeout",
+        message: "The SDK agent was aborted within the time budget.",
       };
     }
 
     // Only the visible output text is returned. Reasoning fields (message parts,
     // usage, snapshots) are intentionally stripped.
-    return { answer: result.outputText, toolTrace, status: result.status };
+    return { answer: result.outputText, toolTrace, status: "completed" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (rateLimited || RATE_LIMIT_RE.test(msg)) {
+      return { answer: "", toolTrace, status: "sdk_rate_limited", message: msg };
+    }
+    if (/abort|timeout|timed out|time budget/i.test(msg)) {
+      return { answer: "", toolTrace, status: "sdk_timeout", message: msg };
+    }
+    return { answer: "", toolTrace, status: "sdk_error", message: msg };
   } finally {
+    clearTimeout(totalTimer);
+    clearInterval(activityTimer);
     unsubscribe();
   }
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      onTimeout();
-      reject(new Error(`Coach timed out after ${ms}ms`));
-    }, ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
 }

@@ -22,6 +22,15 @@
 
 ## Entries
 
+## Entry 11 — 4:00 — A7 coach hang: glm-5.3 "empty response" retry loop (A)
+**Task:** Investigate why the SDK coach hangs; add a watchdog and switch the primary model.
+**Model tier:** cheap (teacherCoach primary → `anthropic/claude-haiku-5.5`; `cline-pass/glm-5.3` dropped as primary).
+**Prompt excerpt:** n/a (diagnostics, no model prompt).
+**What Cline got wrong:** Left glm-5.3 (a reasoning model) as the SDK coach primary. It intermittently returns HTTP 500 `"empty response content"` on tool-calling turns. The installed SDK (`@cline/sdk` 0.0.92 → `@cline/llms`, built on the Vercel `ai` SDK) explicitly treats "empty response" and 429/5xx as retryable — `"Model returned an empty response; retrying"` — and retries with backoff under a default `apiTimeoutMs` of 180s, emitting NO agent events during the wait. So the coach appeared to hang with no request "in flight": the SDK swallowed the error and silently retried.
+**Fix:** (1) Switched `MODELS.teacherCoach.primary` → `anthropic/claude-haiku-5.5` (tools reliably; one-tool verified at 4.0s). (2) Added an outside watchdog in `runCoach`: abort if no tool/text/reasoning event in 15s, hard-cap 30s, and classify `sdk_timeout` / `sdk_rate_limited` / `sdk_error`. (3) `/api/coach` now always returns `{ answer, toolTrace, status, fallback }` (+ `message`), falling back to the plain call on any non-"completed" status.
+**Outcome:** Final test (4 runs, Haiku): re-teach (×2), weakest-concepts, and prompt-injection all `completed` in 4–8s with tool calls (injection = 0 tools, refused). `npm run build` green.
+**Lesson:** The SDK has no retry-count option and a 180s per-request timeout — always bound agent runs with an external watchdog, and don't trust a reasoning model for tool-calling.
+
 ## Entry 10 — 3:35 — A6 SDK bundling + `runtime` segment config fix (A)
 **Task:** Get `/api/coach` (which imports `@cline/sdk` → `@cline/core`/`agents`/`shared`/`llms`) to build under Next 16 Turbopack + `cacheComponents`.
 **Model tier:** n/a (build config).

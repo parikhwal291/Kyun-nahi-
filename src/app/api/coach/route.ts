@@ -9,7 +9,12 @@ import { complete } from "@/lib/ai/client";
 import { MODELS } from "@/lib/ai/models";
 import { getClassOverview } from "@/lib/ai/tools/coachData";
 import { requireTeacher, TeacherAuthError } from "@/lib/auth/teacher";
-import { buildSystemPrompt, runCoach, type CoachLanguage } from "@/lib/sdk/coach";
+import {
+  buildSystemPrompt,
+  runCoach,
+  type CoachLanguage,
+  type CoachStatus,
+} from "@/lib/sdk/coach";
 
 // Route handlers default to the Node.js runtime in Next 16 (Edge is opt-in), which
 // the SDK requires. With cacheComponents enabled, declaring `runtime` here would
@@ -18,8 +23,6 @@ import { buildSystemPrompt, runCoach, type CoachLanguage } from "@/lib/sdk/coach
 const CoachRequestSchema = z.object({
   question: z.string().trim().min(1).max(1000),
 });
-
-const SDK_TIMEOUT_MS = 40_000;
 
 export async function POST(request: Request) {
   if (process.env.COACH_ENABLED !== "true") {
@@ -46,27 +49,41 @@ export async function POST(request: Request) {
   const language: CoachLanguage = /[\u0900-\u097F]/.test(question) ? "hi" : "en";
 
   try {
-    const result = await runCoach({
+    const result = await runCoach({ teacherId, question, language });
+    if (result.status === "completed") {
+      return Response.json({
+        answer: result.answer,
+        toolTrace: result.toolTrace,
+        status: result.status,
+        fallback: false,
+      });
+    }
+    console.warn(
+      `[coach] SDK path ended with ${result.status}; using plain fallback`,
+      result.message ?? "",
+    );
+    return fallbackAnswer(teacherId, question, language, result.status, result.message);
+  } catch (err) {
+    console.warn(
+      "[coach] SDK path threw; using plain fallback:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return fallbackAnswer(
       teacherId,
       question,
       language,
-      timeoutMs: SDK_TIMEOUT_MS,
-    });
-    return Response.json({ answer: result.answer, toolTrace: result.toolTrace });
-  } catch (err) {
-    console.warn(
-      "[coach] SDK path failed; using plain fallback:",
+      "sdk_error",
       err instanceof Error ? err.message : String(err),
     );
   }
-
-  return fallbackAnswer(teacherId, question, language);
 }
 
 async function fallbackAnswer(
   teacherId: string,
   question: string,
   language: CoachLanguage,
+  status: CoachStatus,
+  message?: string,
 ): Promise<Response> {
   let overview;
   try {
@@ -104,12 +121,21 @@ async function fallbackAnswer(
       timeoutMs: MODELS.teacherCoach.timeoutMs,
       temperature: 0.2,
     });
-    return Response.json({ answer: text, toolTrace: [], fallback: true });
+    return Response.json({
+      answer: text,
+      toolTrace: [],
+      status,
+      fallback: true,
+      ...(message ? { message } : {}),
+    });
   } catch (err) {
     console.warn(
       "[coach] fallback completion failed:",
       err instanceof Error ? err.message : String(err),
     );
-    return Response.json({ error: "ai_failed" }, { status: 502 });
+    return Response.json(
+      { answer: "", toolTrace: [], status, fallback: true, message: "Fallback completion failed." },
+      { status: 502 },
+    );
   }
 }
