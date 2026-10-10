@@ -1,15 +1,16 @@
 // src/lib/ai/models.ts
 // Exact model IDs — the ONLY place model strings are allowed.
-// The live catalog at GET https://api.cline.bot/api/v1/models is authoritative;
-// these IDs are asserted against it at /api/health. Never hardcode a model string
-// anywhere else.
 //
-// CATALOG DRIFT (asserted 2026-10-10): PLAN.md §6 routes three models through a
-// `cline-pass/*` namespace, but the live catalog exposes NO `cline-pass/*` prefix.
-// Closest real matches (same underlying model, different provider prefix):
-//   cline-pass/deepseek-v4.1-flash -> deepseek/deepseek-v4.1-flash
-//   cline-pass/qwen3.7-plus       -> qwen/qwen3.7-plus
-//   cline-pass/glm-5.3            -> z-ai/glm-5.3
+// The live catalog (GET /api/v1/models) is authoritative for credit-billed models,
+// but it does NOT list the `cline-pass/*` namespace. Those slugs are verified with
+// an actual completion probe (see /api/health?deep=1), not the catalog list.
+//
+// PROBE RESULTS (2026-10-10, max_tokens=5, prompt "hi", 2 attempts each):
+//   cline-pass/qwen3.7-plus         -> 200 / 200   restored (ClinePass tier)
+//   cline-pass/deepseek-v4.1-flash  -> 200 / 500   restored (ClinePass tier, flaky)
+//   cline-pass/glm-5.3              -> 500 / 500   NOT restored ("empty response content")
+//   cline-pass/mimo-v2.6-flash      -> 500 / 500   NOT restored ("empty response content")
+//   cline-pass/qwen3.8-max          -> 500 / 500   NOT restored ("empty response content")
 
 export type JobName =
   | "extractConcepts"
@@ -31,18 +32,18 @@ export const MODELS: Record<JobName, JobModels> = {
   },
   juniorTurn: {
     primary: "google/gemini-2.5-flash",
-    fallback: "deepseek/deepseek-v4.1-flash", // ClinePass tier (PLAN: cline-pass/*)
+    fallback: "deepseek/deepseek-v4.1-flash", // credit-billed
   },
   evaluateConversation: {
     primary: "anthropic/claude-sonnet-5.5",
     fallback: "google/gemini-2.5-pro",
   },
   groupMisconceptions: {
-    primary: "qwen/qwen3.7-plus", // ClinePass tier (PLAN: cline-pass/*)
-    fallback: "google/gemini-2.5-flash",
+    primary: "cline-pass/qwen3.7-plus", // ClinePass tier (probe OK)
+    fallback: "qwen/qwen3.7-plus",      // credit-billed
   },
   teacherCoach: {
-    primary: "z-ai/glm-5.3", // ClinePass tier (PLAN: cline-pass/*)
+    primary: "z-ai/glm-5.3",            // credit (cline-pass/glm-5.3 failed the probe)
     fallback: "anthropic/claude-haiku-5.5",
   },
   visionPhoto: {
@@ -51,26 +52,31 @@ export const MODELS: Record<JobName, JobModels> = {
   },
 };
 
-// Models billed under the flat ClinePass subscription (per PLAN §6). The catalog
-// dropped the `cline-pass/` prefix, so these are the corrected real IDs.
+// ClinePass-tier models (the 402 fallback set). ONLY cline-pass/* slugs that passed
+// the probe. The deepseek//qwen//z-ai/ catalog versions are credit-billed and are
+// deliberately NOT here.
 export const CLINE_PASS_MODELS = [
-  "deepseek/deepseek-v4.1-flash",
-  "qwen/qwen3.7-plus",
-  "z-ai/glm-5.3",
+  "cline-pass/qwen3.7-plus",
+  "cline-pass/deepseek-v4.1-flash",
 ] as const;
 
-// Used when a credit-billed call is rejected with 402 (credits exhausted) and its
-// configured fallback is also credit-billed: keep the demo running on the flat
-// subscription instead of spending more credits.
-export const CLINE_PASS_FALLBACK_ID = "z-ai/glm-5.3";
+// Default ClinePass-tier model for a credit-billed call that hits 402 (credits
+// exhausted). qwen3.7-plus was the only slug that passed both probe attempts.
+export const CLINE_PASS_FALLBACK_ID = "cline-pass/qwen3.7-plus";
 
 export function isClinePass(modelId: string): boolean {
   return (CLINE_PASS_MODELS as readonly string[]).includes(modelId);
 }
 
-// Every model ID that may be called — for the /api/health catalog assertion.
+// True when the id is a cline-pass/* slug (regardless of probe result). /api/health
+// uses this to skip the catalog-list assertion for slugs the list never contains.
+export function isClinePassSlug(modelId: string): boolean {
+  return modelId.startsWith("cline-pass/");
+}
+
+// Every model ID that may be called — for the /api/health probe + catalog check.
 export function allModelIds(): string[] {
   const ids = Object.values(MODELS).flatMap((job) => [job.primary, job.fallback]);
-  ids.push(CLINE_PASS_FALLBACK_ID);
+  ids.push(...CLINE_PASS_MODELS, CLINE_PASS_FALLBACK_ID);
   return [...new Set(ids)];
 }

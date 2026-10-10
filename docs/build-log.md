@@ -22,6 +22,24 @@
 
 ## Entries
 
+## Entry 04 — 1:35 — completion response is wrapped in `data` (A)
+**Task:** A1/A2 follow-up — add a per-model probe and restore `cline-pass/*` slugs.
+**Model tier:** cheap (probe: `max_tokens=5`, "hi").
+**Prompt excerpt:** n/a.
+**What Cline got wrong:** The client parsed `/chat/completions` as bare OpenAI `{ choices: [...] }`, but api.cline.bot wraps it as `{ data: { choices: [...] } }`, so every completion would have returned empty text. Error bodies are also flat `{ error: "..." }`, not `{ error: { message } }`.
+**Fix:** Added `extractCompletionText` (handles both shapes) and `extractErrorMessage` (handles both error shapes); `attempt()` and `probeModel()` use them.
+**Outcome:** `npm run build` green; a live `cline-pass/qwen3.7-plus` probe now parses its content.
+**Lesson:** Inspect one real completion response before writing the parser — don't trust the documented shape.
+
+## Entry 03 — 1:25 — cline-pass/* slugs are callable but not in the catalog list (A)
+**Task:** Determine which `cline-pass/*` slugs are actually ClinePass-tier.
+**Model tier:** cheap (probe: `max_tokens=5`, "hi", 2 attempts each).
+**Prompt excerpt:** `hi`.
+**What Cline got wrong:** Entry 01 treated the catalog list as authoritative and "corrected" `cline-pass/*` → `deepseek//qwen//z-ai/`. The list omits `cline-pass/*`, but the slugs are still callable.
+**Fix:** Probed 5 slugs — `qwen3.7-plus` 200/200, `deepseek-v4.1-flash` 200/500 (flaky), `glm-5.3`/`mimo-v2.6-flash`/`qwen3.8-max` 500/500 ("empty response content"). Restored the passing slugs as ClinePass-tier; kept `deepseek//qwen//z-ai/` as credit fallbacks; the 402 fallback set now holds only `cline-pass/*`.
+**Outcome:** `/api/health?deep=1` now probes every model in `models.ts`; `cline-pass/qwen3.7-plus` is the group primary and `cline-pass/deepseek-v4.1-flash` is the junior-turn ClinePass fallback.
+**Lesson:** For `cline-pass/*`, a real completion probe is the only authority — never the catalog list.
+
 ## Entry 02 — 1:20 — `export const dynamic` breaks with `cacheComponents` (A)
 **Task:** A1/A2 — build the AI routes (`/api/health`, notes, concepts) and validate with `npm run build`.
 **Model tier:** n/a (Next 16 build).

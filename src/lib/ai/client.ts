@@ -50,6 +50,29 @@ function apiKey(): string {
   return key;
 }
 
+// api.cline.bot wraps successful completions as { data: { choices: [...] } }
+// (not the bare OpenAI { choices } shape). Extract text from either shape.
+function extractCompletionText(data: unknown): string {
+  const root = (data as { data?: unknown }).data ?? data;
+  const choices = (root as { choices?: { message?: { content?: string } }[] }).choices;
+  return choices?.[0]?.message?.content ?? "";
+}
+
+// Error bodies come in two shapes: { error: "..." } or { error: { message: "..." } }.
+function extractErrorMessage(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as { error?: unknown };
+    const err = parsed?.error;
+    if (typeof err === "string") return err;
+    if (err && typeof (err as { message?: unknown }).message === "string") {
+      return (err as { message: string }).message;
+    }
+    return raw.slice(0, 200);
+  } catch {
+    return raw.slice(0, 200);
+  }
+}
+
 function backoffMs(attempt: number): number {
   const ms = Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS);
   return ms + Math.floor(Math.random() * 200); // jitter
@@ -85,8 +108,8 @@ async function attempt(
   });
 
   if (res.ok) {
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const text = data.choices?.[0]?.message?.content ?? "";
+    const data: unknown = await res.json();
+    const text = extractCompletionText(data);
     return { ok: true, model: modelId, text };
   }
 
@@ -260,4 +283,43 @@ export async function listModels(): Promise<string[]> {
   }
   const data = (await res.json()) as { data?: { id: string }[] };
   return (data.data ?? []).map((m) => m.id);
+}
+
+export interface ModelProbe {
+  model: string;
+  ok: boolean;
+  status: number | null;
+  error?: string;
+}
+
+// Dev-only probe: send a tiny completion (max_tokens=5, "hi") to verify a model
+// actually responds. Used by /api/health?deep=1 — the catalog list is not
+// authoritative for cline-pass/* slugs.
+export async function probeModel(modelId: string): Promise<ModelProbe> {
+  try {
+    const res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey()}`,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 5,
+      }),
+    });
+    const raw = await res.text();
+    if (res.ok) {
+      return { model: modelId, ok: true, status: res.status };
+    }
+    return { model: modelId, ok: false, status: res.status, error: extractErrorMessage(raw) };
+  } catch (err) {
+    return {
+      model: modelId,
+      ok: false,
+      status: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }

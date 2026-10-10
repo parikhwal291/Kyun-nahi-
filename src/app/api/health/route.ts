@@ -1,12 +1,13 @@
 // src/app/api/health/route.ts
 // GET /api/health
-// Default: reports key presence (boolean, never the value) + asserts every model
-// ID in models.ts against the live catalog. The Hindi smoke test runs only when
-// ?deep=1 AND NODE_ENV is development, on a free model picked from the live
-// catalog (never hardcoded).
+// Default: reports key presence (boolean, never the value) + asserts credit-billed
+// model IDs against the live catalog. With ?deep=1 AND NODE_ENV=development, it also
+// runs a Hindi smoke test on a free model and probes every model in models.ts with a
+// tiny completion (max_tokens=5, "hi") — the catalog list is not authoritative for
+// cline-pass/* slugs, so those are probed, not list-asserted.
 
-import { allModelIds } from "@/lib/ai/models";
-import { complete, listModels } from "@/lib/ai/client";
+import { allModelIds, isClinePassSlug } from "@/lib/ai/models";
+import { complete, listModels, probeModel, type ModelProbe } from "@/lib/ai/client";
 
 interface SmokeResult {
   model: string;
@@ -27,6 +28,7 @@ export async function GET(request: Request) {
     missing: [],
   };
   let smoke: SmokeResult | null = null;
+  let probe: ModelProbe[] | null = null;
 
   if (keyPresent) {
     try {
@@ -35,18 +37,19 @@ export async function GET(request: Request) {
       catalog = {
         checked: true,
         count: ids.length,
-        missing: allModelIds().filter((id) => !set.has(id)),
+        // The catalog list never includes cline-pass/* slugs — those are probed.
+        missing: allModelIds().filter((id) => !isClinePassSlug(id) && !set.has(id)),
       };
 
       if (deep && isDev) {
         const freeModels = ids.filter((id) => id.includes(":free"));
-        if (freeModels.length > 0) {
-          const testModel = freeModels[0];
-          console.log(`[health] Hindi smoke test on free model: ${testModel}`);
-          smoke = await runSmokeTest(testModel);
-        } else {
-          smoke = { model: "", ok: false, language: "hi" };
-        }
+        smoke =
+          freeModels.length > 0
+            ? await runSmokeTest(freeModels[0])
+            : { model: "", ok: false, language: "hi" };
+
+        // Authoritative per-model probe: tiny completion (max_tokens=5, "hi").
+        probe = await Promise.all(allModelIds().map((id) => probeModel(id)));
       }
     } catch (err) {
       console.warn("[health] catalog check failed:", err instanceof Error ? err.message : String(err));
@@ -56,7 +59,7 @@ export async function GET(request: Request) {
   const ok =
     keyPresent && catalog.checked && catalog.missing.length === 0 && (!smoke || smoke.ok);
 
-  return Response.json({ ok, keyPresent, catalog, smoke });
+  return Response.json({ ok, keyPresent, catalog, smoke, probe });
 }
 
 async function runSmokeTest(modelId: string): Promise<SmokeResult> {
