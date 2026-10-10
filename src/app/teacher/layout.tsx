@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { requireTeacherPage } from "@/lib/auth/teacher";
 
+// auth() reads cookies/headers, so this route must render dynamically.
+export const instant = false;
+
 export default async function TeacherLayout({
   children,
 }: {
@@ -10,3 +13,4 @@ export default async function TeacherLayout({
   await requireTeacherPage();
   return <>{children}</>;
 }
+
