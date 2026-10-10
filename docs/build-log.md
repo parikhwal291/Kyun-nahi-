@@ -24,13 +24,58 @@
 
 <!-- Append entries below, newest at top. -->
 
-## Entry 05 — Task 1 auth — Next.js 16 prerender errors (Person B)
+## Entry 10 — 1:55 — max_tokens=5 probe starved reasoning models (A)
+**Task:** Re-probe cline-pass/* slugs and harden the AI client.
+**Model tier:** cheap (probe: "Reply with the single word: ok", max_tokens=300).
+**Prompt excerpt:** "Reply with the single word: ok".
+**What Cline got wrong:** The first probe used max_tokens=5. Reasoning models (qwen3.7-plus, glm-5.3, deepseek, gemini-2.5-pro) spent all 5 tokens on hidden reasoning, leaving empty visible content — the gateway returned 500 "empty response content", which Cline misread as "slug doesn't exist" (Entries 01/03).
+**Fix:** Re-probed with max_tokens=300; everything except cline-pass/qwen3.8-max (timeout >40s) returns 200 with content. Restored cline-pass/glm-5.3 + cline-pass/mimo-v2.6-flash; added per-job max_tokens (800/1500/3000) with reasoning headroom, empty+length → double-and-retry, and per-request timeouts (30s/60s). probeModel now reports status/empty/finish/reasoning.
+**Outcome:** `npm run build` green; deep probe reports per-model status/empty/finish/reasoning.
+**Lesson:** For reasoning models, token budget must cover reasoning + answer; "empty response content" is token starvation, not a missing model.
+
+## Entry 09 — 1:35 — completion response is wrapped in `data` (A)
+**Task:** A1/A2 follow-up — add a per-model probe and restore `cline-pass/*` slugs.
+**Model tier:** cheap (probe: `max_tokens=5`, "hi").
+**Prompt excerpt:** n/a.
+**What Cline got wrong:** The client parsed `/chat/completions` as bare OpenAI `{ choices: [...] }`, but api.cline.bot wraps it as `{ data: { choices: [...] } }`, so every completion would have returned empty text. Error bodies are also flat `{ error: "..." }`, not `{ error: { message } }`.
+**Fix:** Added `extractCompletionText` (handles both shapes) and `extractErrorMessage` (handles both error shapes); `attempt()` and `probeModel()` use them.
+**Outcome:** `npm run build` green; a live `cline-pass/qwen3.7-plus` probe now parses its content.
+**Lesson:** Inspect one real completion response before writing the parser — don't trust the documented shape.
+
+## Entry 08 — 1:25 — cline-pass/* slugs are callable but not in the catalog list (A)
+**Task:** Determine which `cline-pass/*` slugs are actually ClinePass-tier.
+**Model tier:** cheap (probe: `max_tokens=5`, "hi", 2 attempts each).
+**Prompt excerpt:** `hi`.
+**What Cline got wrong:** Entry 01 treated the catalog list as authoritative and "corrected" `cline-pass/*` → `deepseek//qwen//z-ai/`. The list omits `cline-pass/*`, but the slugs are still callable.
+**Fix:** Probed 5 slugs — `qwen3.7-plus` 200/200, `deepseek-v4.1-flash` 200/500 (flaky), `glm-5.3`/`mimo-v2.6-flash`/`qwen3.8-max` 500/500 ("empty response content"). Restored the passing slugs as ClinePass-tier; kept `deepseek//qwen//z-ai/` as credit fallbacks; the 402 fallback set now holds only `cline-pass/*`.
+**Outcome:** `/api/health?deep=1` now probes every model in `models.ts`; `cline-pass/qwen3.7-plus` is the group primary and `cline-pass/deepseek-v4.1-flash` is the junior-turn ClinePass fallback.
+**Lesson:** For `cline-pass/*`, a real completion probe is the only authority — never the catalog list.
+
+## Entry 07 — 1:20 — `export const dynamic` breaks with `cacheComponents` (A)
+**Task:** A1/A2 — build the AI routes (`/api/health`, notes, concepts) and validate with `npm run build`.
+**Model tier:** n/a (Next 16 build).
+**Prompt excerpt:** n/a.
+**What Cline got wrong:** Cline added `export const dynamic = "force-dynamic"` to three route handlers. With `next.config.ts`'s `cacheComponents: true`, Next 16 rejects that segment config ("not compatible with `nextConfig.cacheComponents`").
+**Fix:** Removed `export const dynamic` from `src/app/api/health/route.ts`, `src/app/api/teacher/notes/route.ts`, `src/app/api/teacher/concepts/route.ts`. Route handlers are dynamic by default (GET touches `request.url` / DB).
+**Outcome:** `npm run build` green; routes listed as `ƒ` (dynamic).
+**Lesson:** With `cacheComponents` enabled, don't declare `dynamic` on route handlers — Next 16 handles it.
+
+## Entry 06 — Task 1 auth — Next.js 16 prerender errors (Person B)
 **Task:** Get teacher + student auth building on Next.js 16.
 **Model tier:** strong (architectural fix).
 **What Cline got wrong:** `auth()` (cookies) and Clerk's `<SignIn/>` (`usePathname`) hit Next 16's "runtime data outside `<Suspense>`" prerender rule, failing `next build`.
 **Fix:** `export const instant = false` on the `/teacher` layout; wrap `<SignIn/>`/`<SignUp/>` in `<Suspense>`.
 **Outcome:** `npm run build` passes; `/teacher` → 307 redirect to sign-in.
 **Lesson:** Next 16's Cache Components model changes where dynamic data is allowed.
+
+## Entry 05 — 0:45 — ClinePass model IDs missing from live catalog (A)
+**Task:** A1 — create `ai/models.ts` with the exact model IDs from PLAN §6.
+**Model tier:** n/a (catalog assertion against `GET /api/v1/models`).
+**Prompt excerpt:** n/a.
+**What Cline got wrong:** PLAN §6 routes three models through a `cline-pass/*` namespace (`cline-pass/deepseek-v4.1-flash`, `cline-pass/qwen3.7-plus`, `cline-pass/glm-5.3`), but the live catalog (458 models) exposes no `cline-pass/*` prefix at all.
+**Fix:** Asserted the live catalog; mapped to the closest real IDs (`deepseek/deepseek-v4.1-flash`, `qwen/qwen3.7-plus`, `z-ai/glm-5.3`) in `models.ts`, and encoded the 402→ClinePass fallback on the corrected IDs.
+**Outcome:** `/api/health` catalog assertion now passes; mapping documented in the `models.ts` header.
+**Lesson:** The live catalog is authoritative — verify model slugs at setup, never trust the docs.
 
 ## Entry 04 — Task 1 auth — no credentials for smoke test (Person B)
 **Task:** Smoke-test Clerk + Mongo flows.
