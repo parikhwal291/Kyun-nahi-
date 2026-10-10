@@ -9,6 +9,7 @@ export default function TeacherHeader() {
   const links = [
     { href: "/teacher/notes", label: "Notes" },
     { href: "/teacher/concepts", label: "Concepts" },
+    { href: "/teacher/dashboard", label: "Dashboard" },
   ];
 
   return (

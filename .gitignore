@@ -41,3 +41,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .clerk/
+
+# scratch (local experiments, never commit)
+scratch/
+
+# red-team regression script (hits the live model; never commit)
+scripts/redteam.ts
+scripts/transcripts.ts
+scripts/transcripts-report.txt

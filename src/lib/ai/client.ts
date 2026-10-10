@@ -222,14 +222,14 @@ export async function complete(opts: CompleteOptions): Promise<RawCompletion> {
   for (let attemptNo = 0; attemptNo <= MAX_RETRIES; attemptNo++) {
     const r = await attempt(model, messages, callOpts);
     if (r.ok) {
-      if (r.emptyContent && r.finishReason === "length") {
+      if (r.finishReason === "length") {
         const doubled = (callOpts.maxTokens ?? DEFAULT_MAX_TOKENS) * 2;
-        console.warn(`[ai] ${model} -> empty content (length); retrying with max_tokens ${doubled}`);
+        console.warn(`[ai] ${model} -> truncated (length); retrying with max_tokens ${doubled}`);
         const retry = await attempt(model, messages, { ...callOpts, maxTokens: doubled });
-        if (retry.ok && !retry.emptyContent) {
+        if (retry.ok && retry.finishReason !== "length") {
           return { model: retry.model, text: retry.text };
         }
-        console.warn(`[ai] ${model} -> still empty after doubling; falling back`);
+        console.warn(`[ai] ${model} -> still truncated after doubling; falling back`);
         break;
       }
       return { model: r.model, text: r.text };
