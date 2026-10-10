@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { getDb } from "../db";
 import type { Session } from "../types";
 
@@ -104,6 +105,16 @@ export async function getSessionFromCookie(): Promise<Session | null> {
 export async function requireStudent(): Promise<StudentSessionContext> {
   const session = await getSessionFromCookie();
   if (!session) throw new StudentAuthError();
+  return { studentId: session.studentId, classId: session.classId, sid: session.sid };
+}
+
+/**
+ * Guard for /student/practice pages. Redirects to /student/login when there is
+ * no valid session (mirrors requireTeacherPage on the teacher side).
+ */
+export async function requireStudentPage(): Promise<StudentSessionContext> {
+  const session = await getSessionFromCookie();
+  if (!session) redirect("/student/login");
   return { studentId: session.studentId, classId: session.classId, sid: session.sid };
 }
 
