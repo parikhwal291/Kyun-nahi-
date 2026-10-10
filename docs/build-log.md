@@ -22,6 +22,12 @@
 
 ## Entries
 
+## Entry 12 — 4:40 — A8 coach data loader: no dashboard to reuse + Clerk-id footgun (A)
+**Task:** Wire `loadEvaluationsForTeacher(teacherId)` to MongoDB via Person B's DB helper/scoping.
+**What we found:** (1) There is **no dashboard yet** — no `/teacher/dashboard` page or `/api/teacher/dashboard` route — so there was no existing "loads evaluations for a teacher" function to reuse; the loader reuses `getDb()` and the same teacher/class scoping as `lib/teacher.ts` instead. (2) **The coach route passes the Clerk userId** (`requireTeacher()` returns it), but classes are owned by the **stored `Teacher.id`**; the loader resolves `clerkUserId → Teacher.id` (falling back to `id`) before scoping. A naive `evaluations.find({ teacherId })` would have silently returned nothing. (3) **`MONGODB_URI` is unset** (`.env` empty, no `.env.local`), so the DB path could not be exercised against the seeded class; the dev sample path was verified instead.
+**Outcome:** sample path verified — `get_class_overview` is identical to `aggregateEvaluations(rows)` (`MATCH: true`); an unowned `conceptId` → `getConceptStats` null, `getMisconceptions` `[]`. `npm run build` green.
+**Lesson:** Check which id a scoping helper expects (Clerk userId vs stored row id) before trusting a filter — and don't assume a planned feature (the dashboard) already exists.
+
 ## Entry 11 — 4:00 — A7 coach hang: intermittent, on glm-5.3 tool-calling turns (A)
 **Task:** Investigate why the SDK coach hangs; add a watchdog and switch the primary model.
 **Model tier:** cheap (teacherCoach primary → `anthropic/claude-haiku-5.5`; `cline-pass/glm-5.3` dropped as primary).

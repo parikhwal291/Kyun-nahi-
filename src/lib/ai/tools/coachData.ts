@@ -2,8 +2,9 @@
 // Teacher-coach data layer (A6). Plain functions that take a teacherId and return
 // scoped, deterministic data for the coach agent. Ownership/scoping lives HERE,
 // derived from the teacherId parameter — never from the model's tool arguments.
-// They build on aggregateEvaluations over Evaluation[] from a single seam,
-// loadEvaluationsForTeacher(teacherId), which Person B wires to MongoDB.
+// They build on aggregateEvaluations over Evaluation[] from one loader,
+// loadEvaluationsForTeacher(teacherId), which reads MongoDB through Person B's DB
+// helper (getDb) using the same teacher/class scoping as lib/teacher.ts.
 
 import {
   aggregateEvaluations,
@@ -11,16 +12,59 @@ import {
   type MisconceptionCluster,
   type ReviewQueueItem,
 } from "../jobs/aggregate";
-import type { Evaluation } from "../../types";
+import { getDb } from "../../db";
+import type { Concept, Evaluation, SchoolClass, Teacher } from "../../types";
+
+const TEACHERS = "teachers";
+const CLASSES = "classes";
+const CONCEPTS = "concepts";
+const EVALUATIONS = "evaluations";
 
 // ---------------------------------------------------------------------------
-// Seam (Person B): load a teacher's evaluations from the DB, re-scoped by
-// teacherId. For now it returns a small built-in sample — every row is
-// isSimulated: true so the UI shows the SIMULATED badge.
+// Load a teacher's evaluations from MongoDB, scoped to the classes they own.
+//
+// The route passes the id from requireTeacher() — which is the Clerk userId — but
+// classes are owned by the STORED Teacher.id, so we resolve either form to the
+// stored teacher (same resolution as lib/teacher.ts's getTeacherContext). This is
+// the only place ownership is decided; tool args never influence it.
+//
+// Evaluations carry no classId, so they are scoped via their concept's classId.
+//
+// Fallback rule: with MONGODB_URI unset we use the built-in sample ONLY in
+// development (so the demo runs offline); otherwise an empty result. When
+// MONGODB_URI IS set we always return the real result, even when it is empty.
 // ---------------------------------------------------------------------------
 export async function loadEvaluationsForTeacher(teacherId: string): Promise<Evaluation[]> {
-  void teacherId; // the scoping key once the DB is wired
-  return SAMPLE_EVALUATIONS;
+  if (!process.env.MONGODB_URI) {
+    return process.env.NODE_ENV === "development" ? SAMPLE_EVALUATIONS : [];
+  }
+
+  const db = await getDb();
+
+  const teachers = db.collection<Teacher>(TEACHERS);
+  const owner =
+    (await teachers.findOne({ clerkUserId: teacherId })) ??
+    (await teachers.findOne({ id: teacherId }));
+  if (!owner) return [];
+
+  const classes = await db
+    .collection<SchoolClass>(CLASSES)
+    .find({ teacherId: owner.id })
+    .toArray();
+  const classIds = classes.map((schoolClass) => schoolClass.id);
+  if (classIds.length === 0) return [];
+
+  const concepts = await db
+    .collection<Concept>(CONCEPTS)
+    .find({ classId: { $in: classIds } })
+    .toArray();
+  const conceptIds = concepts.map((concept) => concept.id);
+  if (conceptIds.length === 0) return [];
+
+  return db
+    .collection<Evaluation>(EVALUATIONS)
+    .find({ conceptId: { $in: conceptIds } })
+    .toArray();
 }
 
 function sampleEval(
