@@ -38,6 +38,7 @@ export default async function ChatPage({
         conversationId={conversation.id}
         conceptTitle={concept?.title ?? "Concept"}
         initialTurns={initialTurns}
+        initiallyDone={conversation.status === "done"}
       />
     </main>
   );

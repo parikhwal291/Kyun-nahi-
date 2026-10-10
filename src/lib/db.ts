@@ -55,6 +55,13 @@ export async function ensureIndexes(): Promise<void> {
       { unique: true },
     ),
     db.collection("sessions").createIndex({ sid: 1 }, { unique: true }),
+    // One evaluation per conversation: makes /api/chat/evaluate idempotent and
+    // closes the double-submit race (the second insert hits a duplicate key).
+    db
+      .collection("evaluations")
+      .createIndex({ conversationId: 1 }, { unique: true }),
+    // Ownership-scoped lookups used by /api/chat/turn and /api/chat/evaluate.
+    db.collection("conversations").createIndex({ id: 1, studentId: 1 }),
     db.collection("login_locks").createIndex(
       { classCode: 1, rollNumber: 1 },
       { unique: true },
