@@ -1,0 +1,55 @@
+# Project rules — AI practice companion for Indian classrooms (Class 3–12, en/hi)
+
+## Stack & conventions
+- Next.js App Router + TypeScript strict + Tailwind. API routes are the backend.
+  No Redux; server state via fetch + local React state only.
+- MongoDB Atlas M0 via the native `mongodb` driver 7.x + Zod. NO Prisma, NO ORM.
+  Never run `npx prisma@latest`, `npx prisma init`, or add any `@prisma/*` package.
+- Shared contract lives in `src/lib/types.ts` (Zod). Change the schema + its call
+  sites in the same response, or not at all. No invented fields.
+
+## Security & scoping (hard rules)
+- `CLINE_API_KEY` and all secrets are server-side only; never `NEXT_PUBLIC_`, never
+  committed, never echoed in output. Use `.env` (gitignored) + `.env.example`.
+- Every teacher-scoped query must filter by `teacherId`/`classId` derived from the
+  session helper (`requireTeacher`), never from the request body. Students see only
+  their own `studentId`.
+- PIN hashing uses Node's built-in `crypto.scrypt` (async) only — never argon2/bcrypt
+  native modules. Rate-limit PIN attempts (5 fails → 10-min lockout, generic errors).
+- Student sessions: opaque `sid` + HMAC in an httpOnly cookie; the DB `Session` row is
+  the source of truth. "Switch student" must revoke server-side (delete row + expire
+  cookie). 30-min sliding TTL, 2h absolute cap.
+- SDK agents: no file, shell, or web tools. Coach tools read-only; the evaluator's
+  `save_evaluation` is the only write, scoped to the conversation's teacher.
+
+## AI layer
+- All model calls go through `src/lib/ai/client.ts` → `https://api.cline.bot/api/v1`
+  (OpenAI-compatible). Model IDs exist ONLY in `src/lib/ai/models.ts` (primary +
+  fallback per job). Never hardcode a model string elsewhere.
+- Model IDs are catalog-asserted at setup against `GET /api/v1/models`; the live
+  catalog is authoritative, not the docs.
+- Build plain-call fallbacks FIRST for every job; the SDK agents wrap them behind
+  flags (`COACH_ENABLED`). Never break the core loop for SDK work. SDK work is
+  timeboxed at 45 minutes total; if blocked >10 min, revert to fallback and log it.
+
+## Product honesty & safety (hard rules)
+- Never claim offline support, real-school results, or educational/clinical guarantees
+  anywhere in UI, README, or commits.
+- Every seeded row carries `isSimulated: true` and shows the SIMULATED badge.
+- No copyrighted textbook content — write short original demo notes only (public/demo).
+- No unnecessary personal data: student alias only (no full names, photos, phones,
+  emails). PIN is classroom-grade; say so in the README.
+- Junior chat prompts must: ask ONE question per turn, never reveal the answer, stay
+  within teacher-approved material, stay age-appropriate for the level, and switch
+  language only when the student asks.
+
+## Workflow
+- Before coding a feature: state the plan in ≤5 bullets. After: run `npm run build`
+  (or `tsc --noEmit`) to validate.
+- Work only in your assigned folders (A: `lib/ai`, AI API routes, coach; B: components,
+  pages, auth, data). Coordinate schema changes in the shared `types.ts`.
+- Integration checkpoints at ~1:20, 2:00, 2:50, 4:20 — stop the line 5 min each.
+- Deploy only in the B6 slot and never block the core loop on it.
+- After any notable Cline mistake/fix, append an entry to `docs/build-log.md` in the
+  standard format. Conventional commits; commit often; never commit
+  `node_modules/.env/.next`.
