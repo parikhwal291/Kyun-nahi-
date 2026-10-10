@@ -50,7 +50,9 @@
 **Lesson:** Big single-file edits must be split into small, brace-balanced chunks — and always re-run the type check after multi-part edits.
 
 
-## Entry 05 — 1:55 — max_tokens=5 probe starved reasoning models (A)
+<!-- Append entries below, newest at top. -->
+
+## Entry 10 — 1:55 — max_tokens=5 probe starved reasoning models (A)
 **Task:** Re-probe cline-pass/* slugs and harden the AI client.
 **Model tier:** cheap (probe: "Reply with the single word: ok", max_tokens=300).
 **Prompt excerpt:** "Reply with the single word: ok".
@@ -59,7 +61,7 @@
 **Outcome:** `npm run build` green; deep probe reports per-model status/empty/finish/reasoning.
 **Lesson:** For reasoning models, token budget must cover reasoning + answer; "empty response content" is token starvation, not a missing model.
 
-## Entry 04 — 1:35 — completion response is wrapped in `data` (A)
+## Entry 09 — 1:35 — completion response is wrapped in `data` (A)
 **Task:** A1/A2 follow-up — add a per-model probe and restore `cline-pass/*` slugs.
 **Model tier:** cheap (probe: `max_tokens=5`, "hi").
 **Prompt excerpt:** n/a.
@@ -68,7 +70,7 @@
 **Outcome:** `npm run build` green; a live `cline-pass/qwen3.7-plus` probe now parses its content.
 **Lesson:** Inspect one real completion response before writing the parser — don't trust the documented shape.
 
-## Entry 03 — 1:25 — cline-pass/* slugs are callable but not in the catalog list (A)
+## Entry 08 — 1:25 — cline-pass/* slugs are callable but not in the catalog list (A)
 **Task:** Determine which `cline-pass/*` slugs are actually ClinePass-tier.
 **Model tier:** cheap (probe: `max_tokens=5`, "hi", 2 attempts each).
 **Prompt excerpt:** `hi`.
@@ -77,7 +79,7 @@
 **Outcome:** `/api/health?deep=1` now probes every model in `models.ts`; `cline-pass/qwen3.7-plus` is the group primary and `cline-pass/deepseek-v4.1-flash` is the junior-turn ClinePass fallback.
 **Lesson:** For `cline-pass/*`, a real completion probe is the only authority — never the catalog list.
 
-## Entry 02 — 1:20 — `export const dynamic` breaks with `cacheComponents` (A)
+## Entry 07 — 1:20 — `export const dynamic` breaks with `cacheComponents` (A)
 **Task:** A1/A2 — build the AI routes (`/api/health`, notes, concepts) and validate with `npm run build`.
 **Model tier:** n/a (Next 16 build).
 **Prompt excerpt:** n/a.
@@ -86,7 +88,15 @@
 **Outcome:** `npm run build` green; routes listed as `ƒ` (dynamic).
 **Lesson:** With `cacheComponents` enabled, don't declare `dynamic` on route handlers — Next 16 handles it.
 
-## Entry 01 — 0:45 — ClinePass model IDs missing from live catalog (A)
+## Entry 06 — Task 1 auth — Next.js 16 prerender errors (Person B)
+**Task:** Get teacher + student auth building on Next.js 16.
+**Model tier:** strong (architectural fix).
+**What Cline got wrong:** `auth()` (cookies) and Clerk's `<SignIn/>` (`usePathname`) hit Next 16's "runtime data outside `<Suspense>`" prerender rule, failing `next build`.
+**Fix:** `export const instant = false` on the `/teacher` layout; wrap `<SignIn/>`/`<SignUp/>` in `<Suspense>`.
+**Outcome:** `npm run build` passes; `/teacher` → 307 redirect to sign-in.
+**Lesson:** Next 16's Cache Components model changes where dynamic data is allowed.
+
+## Entry 05 — 0:45 — ClinePass model IDs missing from live catalog (A)
 **Task:** A1 — create `ai/models.ts` with the exact model IDs from PLAN §6.
 **Model tier:** n/a (catalog assertion against `GET /api/v1/models`).
 **Prompt excerpt:** n/a.
@@ -94,3 +104,35 @@
 **Fix:** Asserted the live catalog; mapped to the closest real IDs (`deepseek/deepseek-v4.1-flash`, `qwen/qwen3.7-plus`, `z-ai/glm-5.3`) in `models.ts`, and encoded the 402→ClinePass fallback on the corrected IDs.
 **Outcome:** `/api/health` catalog assertion now passes; mapping documented in the `models.ts` header.
 **Lesson:** The live catalog is authoritative — verify model slugs at setup, never trust the docs.
+
+## Entry 04 — Task 1 auth — no credentials for smoke test (Person B)
+**Task:** Smoke-test Clerk + Mongo flows.
+**Model tier:** — (environment).
+**What Cline got wrong:** no Clerk keys / MongoDB URI available.
+**Fix:** provisioned accountless dev keys with `clerk init --accountless`; MongoDB URI still pending.
+**Outcome:** teacher auth verified end-to-end; student login blocked on the Mongo URI.
+**Lesson:** provision throwaway credentials early for live testing.
+
+## Entry 03 — Task 1 auth — assumed `createRouteMatcher` (Person B)
+**Task:** Protect /teacher + /api/teacher with Clerk.
+**Model tier:** strong.
+**What Cline got wrong:** assumed `createRouteMatcher` (middleware route matching) was the pattern.
+**Fix:** `createRouteMatcher` is deprecated in Clerk v7 → resource-based `auth()` in `requireTeacher()`.
+**Outcome:** teacher guard works.
+**Lesson:** check the installed SDK's deprecations before coding against docs.
+
+## Entry 02 — scaffold — assumed `middleware.ts` (Person B)
+**Task:** Add the Clerk middleware guard.
+**Model tier:** strong.
+**What Cline got wrong:** assumed `middleware.ts` was the guard file.
+**Fix:** Next.js 16 renamed `middleware.ts` → `proxy.ts` (`src/proxy.ts`).
+**Outcome:** dev server boots; proxy runs.
+**Lesson:** read the installed Next.js version's file conventions.
+
+## Entry 01 — scaffold — Node not installed (Person B)
+**Task:** Scaffold the Next.js app.
+**Model tier:** — (environment).
+**What Cline got wrong:** Node missing; backgrounded `brew install node` was killed when its shell exited.
+**Fix:** `brew install node` in the foreground (v26.11.1).
+**Outcome:** scaffold + build working.
+**Lesson:** run long installs in the foreground.

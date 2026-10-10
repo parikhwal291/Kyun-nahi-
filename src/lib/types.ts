@@ -187,3 +187,23 @@ export type JuniorTurnResponse = z.infer<typeof JuniorTurnResponseSchema>;
 export type EvaluateConversationRequest = z.infer<typeof EvaluateConversationRequestSchema>;
 export type EvaluateConversationResponse = z.infer<typeof EvaluateConversationResponseSchema>;
 
+// ---------------------------------------------------------------------------
+// Student auth (Person B) — login input + PIN lockout state
+// ---------------------------------------------------------------------------
+export const StudentLoginInputSchema = z.object({
+  classCode: z.string().trim().min(4).max(12),
+  rollNumber: z.coerce.number().int().positive(),
+  pin: z.string().trim().regex(/^\d{4}$/, "PIN must be exactly 4 digits"),
+});
+
+export const LoginAttemptSchema = z.object({
+  classCode: z.string(),
+  rollNumber: z.number().int().positive(),
+  failedCount: z.number().int().min(0),
+  lockedUntil: z.coerce.date().nullable(),
+  lastFailedAt: z.coerce.date().nullable(),
+});
+
+export type StudentLoginInput = z.infer<typeof StudentLoginInputSchema>;
+export type LoginAttempt = z.infer<typeof LoginAttemptSchema>;
+
