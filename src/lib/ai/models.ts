@@ -57,12 +57,11 @@ export const MODELS: Record<JobName, JobModels> = {
     timeoutMs: 30_000,
   },
   teacherCoach: {
-    // glm-5.3 intermittently returns 500 "empty response content" on tool-calling turns
-    // and the SDK silently retries 5xx under a 180s default timeout with no events — so
-    // the SDK agent uses Haiku, which tools reliably. The plain-call fallback stays on
-    // Haiku too.
+    // glm-5.3 intermittently hangs on tool-calling turns (see build-log Entry 11), so the
+    // SDK agent uses Haiku, which tools reliably. The plain-call fallback is a DIFFERENT
+    // model (gemini-2.5-flash) so a bad turn on one model doesn't take both paths down.
     primary: "anthropic/claude-haiku-5.5",
-    fallback: "anthropic/claude-haiku-5.5",
+    fallback: "google/gemini-2.5-flash",
     maxTokens: 1500,
     timeoutMs: 30_000,
   },

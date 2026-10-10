@@ -147,6 +147,7 @@ export async function runCoach(options: CoachRunOptions): Promise<CoachRunResult
   const toolTrace: CoachToolTraceEntry[] = [];
   let lastActivityAt = Date.now();
   let rateLimited = false;
+  let timedOut = false;
 
   const unsubscribe = agent.subscribe((event) => {
     switch (event.type) {
@@ -178,17 +179,32 @@ export async function runCoach(options: CoachRunOptions): Promise<CoachRunResult
     }
   });
 
-  // Abort if nothing (no tool call, no text/reasoning delta) arrives within 15s, and
-  // hard-cap the whole run at 30s. This bounds the SDK's silent retry loop.
-  const totalTimer = setTimeout(() => agent.abort("sdk total time budget exceeded"), TOTAL_TIMEOUT_MS);
+  // The SDK defaults apiTimeoutMs to 180s and silently retries; a hung *tool* also blocks
+  // the run loop, and agent.abort() alone does not unblock it. So we abort AND race the
+  // run against a hard timeout, guaranteeing runCoach always returns within 30s.
+  let fireTimeout: ((reason: string) => void) | null = null;
+  const hardTimeout = new Promise<never>((_, reject) => {
+    fireTimeout = (reason: string) => {
+      timedOut = true;
+      agent.abort(reason);
+      reject(new Error(reason));
+    };
+  });
+
+  const totalTimer = setTimeout(() => fireTimeout?.("sdk total time budget exceeded"), TOTAL_TIMEOUT_MS);
   const activityTimer = setInterval(() => {
     if (Date.now() - lastActivityAt > ACTIVITY_TIMEOUT_MS) {
-      agent.abort("sdk no-activity timeout");
+      fireTimeout?.("sdk no-activity timeout");
     }
   }, 500);
 
+  const runPromise = agent.run(question);
+  runPromise.catch(() => {
+    // Swallow the run's eventual rejection when the hard timeout wins the race.
+  });
+
   try {
-    const result = await agent.run(question);
+    const result = await Promise.race([runPromise, hardTimeout]);
 
     if (result.status === "failed") {
       return {
@@ -215,7 +231,7 @@ export async function runCoach(options: CoachRunOptions): Promise<CoachRunResult
     if (rateLimited || RATE_LIMIT_RE.test(msg)) {
       return { answer: "", toolTrace, status: "sdk_rate_limited", message: msg };
     }
-    if (/abort|timeout|timed out|time budget/i.test(msg)) {
+    if (timedOut || /abort|timeout|timed out|time budget/i.test(msg)) {
       return { answer: "", toolTrace, status: "sdk_timeout", message: msg };
     }
     return { answer: "", toolTrace, status: "sdk_error", message: msg };
