@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.14",
+    "@cline/sdk": "^0.0.92",
     "mongodb": "^7.7.0",
     "next": "16.4.0",
     "react": "19.3.0",
