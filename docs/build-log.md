@@ -22,6 +22,15 @@
 
 ## Entries
 
+## Entry 08 — 2:45 — A5 dashboard aggregate helper (deterministic) (A)
+**Task:** Build `aggregateEvaluations` — a pure, no-model roll-up of Evaluation rows for the dashboard: per-concept status counts, misconception clusters (tag → count + sample ids), prereq-gap counts, a low-confidence review queue, and a simulated-row count.
+**Model tier:** n/a (deterministic code, no model call — this is the cut-line fallback for AI clustering).
+**Prompt excerpt:** n/a.
+**What Cline got wrong:** The `hasText` helper was declared `: boolean`, so TypeScript still saw `misconceptionTag` as `string | null` inside the cluster block — `next build` failed with TS2345.
+**Fix:** Made it a type predicate — `function hasText(value: string | null): value is string` — so the narrowing propagates. Re-ran `npm run build` green.
+**Outcome:** `npx tsx scratch/aggregate-test.ts` (git-ignored) prints the aggregate for 9 sample evals across 3 concepts (3 tags, 5 simulated rows, review queue sorted ascending by confidence). `npm run build` green.
+**Lesson:** A narrowing helper must be declared as a type predicate, not `boolean`, for the compiler to propagate the narrowing to callers.
+
 ## Entry 07 — 2:25 — A4 evaluateConversation + evaluator red-team (A)
 **Task:** Build `evaluateConversation` (plain call) + `/api/chat/evaluate` route; grade causal points, not vocabulary.
 **Model tier:** strong (evaluateConversation → `anthropic/claude-sonnet-5.5`).
